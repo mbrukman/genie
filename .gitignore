@@ -67,6 +67,7 @@ out
 *.iws
 *.iml
 atlassian-ide-plugin.xml
+genie.iml
 
 # Eclipse specific files/directories #
 ######################################
