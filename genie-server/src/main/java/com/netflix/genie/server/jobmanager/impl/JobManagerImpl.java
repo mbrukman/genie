@@ -176,7 +176,7 @@ public class JobManagerImpl implements JobManager {
         this.setupCommonProcess(processBuilder);
 
         // Launch the actual process
-        this.launchProcess(processBuilder);
+        this.launchProcess(processBuilder, 5000);
     }
 
     /**
@@ -196,14 +196,35 @@ public class JobManagerImpl implements JobManager {
             LOG.info("Attempting to kill the process " + processId);
             try {
                 final String genieHome = ConfigurationManager.getConfigInstance()
-                        .getString("netflix.genie.server.sys.home");
+                        .getString("com.netflix.genie.server.sys.home");
                 if (genieHome == null || genieHome.isEmpty()) {
-                    final String msg = "Property netflix.genie.server.sys.home is not set correctly";
+                    final String msg = "Property com.netflix.genie.server.sys.home is not set correctly";
                     LOG.error(msg);
                     throw new GenieServerException(msg);
                 }
-                Runtime.getRuntime().exec(
+                Process killProcessId = Runtime.getRuntime().exec(
                         genieHome + File.separator + "jobkill.sh " + processId);
+
+                int returnCode = 1;
+                int counter = 0;
+                while (counter < 3) {
+                    counter++;
+                    try {
+                        returnCode = killProcessId.exitValue();
+                        LOG.info("Kill script finished");
+                        break;
+                    } catch (IllegalThreadStateException e) {
+                        LOG.info("Kill script not finished yet. Will retry");
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e1) {
+                            LOG.info("Sleep interrupted. Ignoring.");
+                        }
+                    }
+                }
+                if (returnCode != 0) {
+                    throw new GenieServerException("Failed to kill the job");
+                }
             } catch (final GenieException | IOException e) {
                 final String msg = "Failed to kill the job";
                 LOG.error(msg, e);
@@ -238,9 +259,10 @@ public class JobManagerImpl implements JobManager {
      * Actually launch a process based on the process builder.
      *
      * @param processBuilder The process builder to use.
+     * @param sleepTime The time to sleep between checks of the job process status
      * @throws GenieException If any issue happens launching the process.
      */
-    protected void launchProcess(final ProcessBuilder processBuilder) throws GenieException {
+    protected void launchProcess(final ProcessBuilder processBuilder, final int sleepTime) throws GenieException {
         try {
             // launch job, and get process handle
             final Process proc = processBuilder.start();
@@ -251,6 +273,7 @@ public class JobManagerImpl implements JobManager {
             this.jobMonitor.setJob(this.job);
             this.jobMonitor.setProcess(proc);
             this.jobMonitor.setWorkingDir(this.jobDir);
+            this.jobMonitor.setThreadSleepTime(sleepTime);
             this.jobMonitorThread.start();
             this.jobService.setJobStatus(this.job.getId(), JobStatus.RUNNING, "Job is running");
             LOG.info("Successfully launched the job with PID = " + pid);
@@ -362,17 +385,23 @@ public class JobManagerImpl implements JobManager {
         // set the java home
         final String javaHome = ConfigurationManager
                 .getConfigInstance()
-                .getString("netflix.genie.server.java.home");
+                .getString("com.netflix.genie.server.java.home");
         if (StringUtils.isNotBlank(javaHome)) {
             processBuilder.environment().put("JAVA_HOME", javaHome);
+        }
+
+        // Set an ARN if one is available for role assumption with S3
+        final String arn = ConfigurationManager.getConfigInstance().getString("com.netflix.genie.server.aws.iam.arn");
+        if (StringUtils.isNotBlank(arn)) {
+            processBuilder.environment().put("ARN", arn);
         }
 
         // set the genie home
         final String genieHome = ConfigurationManager
                 .getConfigInstance()
-                .getString("netflix.genie.server.sys.home");
+                .getString("com.netflix.genie.server.sys.home");
         if (StringUtils.isBlank(genieHome)) {
-            final String msg = "Property netflix.genie.server.sys.home is not set correctly";
+            final String msg = "Property com.netflix.genie.server.sys.home is not set correctly";
             LOG.error(msg);
             throw new GenieServerException(msg);
         }
@@ -383,7 +412,7 @@ public class JobManagerImpl implements JobManager {
         if (!this.job.isDisableLogArchival()) {
             final String s3ArchiveLocation = ConfigurationManager
                     .getConfigInstance()
-                    .getString("netflix.genie.server.s3.archive.location");
+                    .getString("com.netflix.genie.server.s3.archive.location");
             if (StringUtils.isNotBlank(s3ArchiveLocation)) {
                 processBuilder.environment().put("S3_ARCHIVE_LOCATION", s3ArchiveLocation);
             }
@@ -399,9 +428,9 @@ public class JobManagerImpl implements JobManager {
     private String getGenieHome() throws GenieException {
         final String genieHome = ConfigurationManager
                 .getConfigInstance()
-                .getString("netflix.genie.server.sys.home");
+                .getString("com.netflix.genie.server.sys.home");
         if (StringUtils.isBlank(genieHome)) {
-            final String msg = "Property netflix.genie.server.sys.home is not set correctly";
+            final String msg = "Property com.netflix.genie.server.sys.home is not set correctly";
             LOG.error(msg);
             throw new GenieServerException(msg);
         }
@@ -451,9 +480,9 @@ public class JobManagerImpl implements JobManager {
     private String getBaseUserWorkingDirectory() throws GenieException {
         final String baseUserWorkingDir = ConfigurationManager
                 .getConfigInstance()
-                .getString("netflix.genie.server.user.working.dir");
+                .getString("com.netflix.genie.server.user.working.dir");
         if (StringUtils.isBlank(baseUserWorkingDir)) {
-            final String msg = "Property netflix.genie.server.user.working.dir is not set";
+            final String msg = "Property com.netflix.genie.server.user.working.dir is not set";
             LOG.error(msg);
             throw new GenieServerException(msg);
         }
